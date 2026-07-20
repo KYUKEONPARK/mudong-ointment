@@ -174,12 +174,19 @@ st.markdown(
     <style>
       /* 상단 툴바(Fork/GitHub/메뉴)·하단 배지 숨기기 */
       header[data-testid="stHeader"] {{ display:none; }}
-      [data-testid="stToolbar"] {{ display:none; }}
-      [data-testid="stDecoration"] {{ display:none; }}
-      [data-testid="stStatusWidget"] {{ display:none; }}
+      [data-testid="stToolbar"] {{ display:none !important; }}
+      [data-testid="stDecoration"] {{ display:none !important; }}
+      [data-testid="stStatusWidget"] {{ display:none !important; visibility:hidden !important; }}
       #MainMenu {{ visibility:hidden; }}
       footer {{ visibility:hidden; }}
-      [class*="viewerBadge"] {{ display:none !important; }}
+      [class*="viewerBadge"], .viewerBadge_container__1QSob,
+      .viewerBadge_link__1S137, .stAppDeployButton {{
+          display:none !important; visibility:hidden !important;
+      }}
+
+      /* 좌우 스와이프 시 화면 밀림 방지(세로 스크롤은 유지) */
+      html, body, .stApp {{ overflow-x:hidden !important; max-width:100%; }}
+      body {{ overscroll-behavior-x:none; }}
 
       .stApp {{ background:#f6f9f6; }}
       .block-container {{ padding-top:1.4rem; }}
@@ -337,12 +344,16 @@ if st.session_state["show_camera"]:
         st.info("카메라 인식(OCR)을 쓰려면 관리자가 Vision API 키를 설정해야 합니다. "
                 "지금은 위 검색창에 이름을 직접 입력해 주세요.")
     else:
-        st.caption("약 상자·튜브의 제품명이 잘 보이게 촬영하세요.")
-        photo = st.camera_input("약 상자 촬영", label_visibility="collapsed")
-        if photo is not None:
+        st.caption("아래 버튼을 눌러 약 상자를 촬영하거나 사진을 선택하세요. "
+                   "(제품명이 잘 보이게 찍어 주세요)")
+        uploaded = st.file_uploader(
+            "사진 촬영 또는 선택", type=["jpg", "jpeg", "png"],
+            key="cam_file", label_visibility="collapsed")
+        if uploaded is not None:
+            st.image(uploaded, use_container_width=True)
             with st.spinner("글자 인식 중..."):
                 try:
-                    text = ocr.ocr_text(photo.getvalue())
+                    text = ocr.ocr_text(uploaded.getvalue())
                 except ocr.OCRError as e:
                     text = ""
                     st.error(f"인식 실패: {e}")

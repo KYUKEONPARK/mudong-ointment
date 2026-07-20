@@ -172,8 +172,17 @@ def _render_detail(row: dict):
 st.markdown(
     f"""
     <style>
+      /* 상단 툴바(Fork/GitHub/메뉴)·하단 배지 숨기기 */
+      header[data-testid="stHeader"] {{ display:none; }}
+      [data-testid="stToolbar"] {{ display:none; }}
+      [data-testid="stDecoration"] {{ display:none; }}
+      [data-testid="stStatusWidget"] {{ display:none; }}
+      #MainMenu {{ visibility:hidden; }}
+      footer {{ visibility:hidden; }}
+      [class*="viewerBadge"] {{ display:none !important; }}
+
       .stApp {{ background:#f6f9f6; }}
-      .block-container {{ padding-top:2.2rem; }}
+      .block-container {{ padding-top:1.4rem; }}
       /* 브랜드 타이틀 */
       .sr-brand {{ text-align:center; font-weight:800; letter-spacing:1px;
                    line-height:1.1; margin:0.2rem 0 0.4rem; }}
@@ -190,13 +199,20 @@ st.markdown(
           border-color:{ACCENT_GREEN};
           box-shadow:0 0 0 2px rgba(76,201,138,0.2);
       }}
-      /* 카메라 버튼 */
+      /* 검색줄: 모바일에서도 가로 배치 유지(세로로 쌓이지 않게) */
+      div[data-testid="stHorizontalBlock"] {{
+          flex-wrap:nowrap; align-items:center; gap:0.4rem;
+      }}
+      /* 카메라 아이콘 버튼(검색창 오른쪽, 정사각 알약형) */
       div[data-testid="column"]:nth-of-type(2) div.stButton > button {{
-          border-radius:26px; height:48px; width:100%;
-          border:2px solid #a9dcc4; background:#ffffff; font-size:1.3rem;
+          border-radius:50%; height:48px; width:48px; min-height:48px;
+          padding:0; border:2px solid #a9dcc4; background:#ffffff;
       }}
       div[data-testid="column"]:nth-of-type(2) div.stButton > button:hover {{
           border-color:{ACCENT_GREEN}; background:#f0fbf5;
+      }}
+      div[data-testid="column"]:nth-of-type(2) div.stButton > button span {{
+          font-size:1.4rem; color:#1f2933;
       }}
     </style>
     """,
@@ -227,96 +243,9 @@ def _render_hero(big: bool):
         )
 
 
-# ─────────────────────────────────────────────
-#  검색 상태
-# ─────────────────────────────────────────────
-if "show_camera" not in st.session_state:
-    st.session_state["show_camera"] = False
-
-current_q = st.session_state.get("search_box", "").strip()
-_render_hero(big=not current_q)
-
-# 검색줄: 입력창 + 카메라 버튼
-c_in, c_cam = st.columns([5, 1])
-with c_in:
-    q = st.text_input(
-        "검색어", key="search_box", label_visibility="collapsed",
-        placeholder="검색어를 입력하세요",
-    )
-with c_cam:
-    if st.button("📷", key="cam_toggle", help="약 상자 촬영으로 검색"):
-        st.session_state["show_camera"] = not st.session_state["show_camera"]
-
-# 카메라(OCR) 영역
-if st.session_state["show_camera"]:
-    if not ocr.is_configured():
-        st.info("카메라 인식(OCR)을 쓰려면 관리자가 Vision API 키를 설정해야 합니다. "
-                "지금은 위 검색창에 이름을 직접 입력해 주세요.")
-    else:
-        st.caption("약 상자·튜브의 제품명이 잘 보이게 촬영하세요.")
-        photo = st.camera_input("약 상자 촬영", label_visibility="collapsed")
-        if photo is not None:
-            with st.spinner("글자 인식 중..."):
-                try:
-                    text = ocr.ocr_text(photo.getvalue())
-                except ocr.OCRError as e:
-                    text = ""
-                    st.error(f"인식 실패: {e}")
-            if text:
-                cands = core.match_products_from_text(ROWS, text)
-                if cands:
-                    st.markdown("**인식된 후보 — 눌러서 검색**")
-                    for cand in cands:
-                        if st.button(f"🔍 {cand}", key=f"cand_{cand}"):
-                            st.session_state["search_box"] = cand
-                            st.session_state["show_camera"] = False
-                            st.rerun()
-                else:
-                    st.warning("일치하는 약을 찾지 못했습니다. "
-                               "아래 인식된 글자를 참고해 직접 검색해 보세요.")
-                with st.expander("인식된 전체 글자 보기"):
-                    st.code(text, language=None)
-
-# 분류 필터 + 안내
-with st.expander("분류 필터 · 정보", expanded=False):
-    cat_label = st.selectbox("분류 필터", list(FILTER_OPTIONS.keys()), index=0)
-    st.caption(f"현재 {NOTES[0]}, {NOTES[1]} 수록.")
-    st.caption(core.PATIENT_GUIDE["메타"]["면책"])
-cat_filter = FILTER_OPTIONS[cat_label]
-
-res = core.search_ointments(ROWS, q.strip(), cat_filter)
-
-# 검색 요약 (스테로이드 등급 안내)
-grades = sorted(
-    {int(r["등급_int"]) for r in res if r.get("등급_int") is not None}
-    | {int(r["복합스테로이드등급"]) for r in res
-       if r.get("복합스테로이드등급") is not None}
-)
-if q.strip() and grades:
-    txt = ", ".join(
-        f"{g}등급({core.GRADE_INFO.get(g, ('', ''))[0]})" for g in grades)
-    st.success(f"'{q.strip()}' → 스테로이드 {txt}")
-
-# 검색어나 필터가 있을 때만 결과를 노출(시작 화면을 깔끔하게)
-if q.strip() or cat_filter:
-    st.markdown(f"**검색 결과 {len(res)}건**")
-    if not res:
-        st.info("검색 결과가 없습니다. 성분명(국문/영문)이나 제품명 일부로 검색해 보세요.")
-    else:
-        shown = res[:MAX_SHOW]
-        if len(res) > MAX_SHOW:
-            st.caption(f"많은 결과 중 상위 {MAX_SHOW}건만 표시합니다. "
-                       "검색어로 더 좁혀 보세요.")
-        for row in shown:
-            with st.expander(_s(row.get("제품명"))):
-                _render_detail(row)
-
-
-# ─────────────────────────────────────────────
-#  환자 설명서 (전체 안내)
-# ─────────────────────────────────────────────
-st.divider()
-with st.expander("📖 환자 설명서 (전체 안내)"):
+def _render_full_guide():
+    """환자 설명서 전체 안내(전용 화면용)."""
+    st.markdown("### 📖 환자 설명서 (전체 안내)")
     g = core.PATIENT_GUIDE
     t1, t2, t3, t4, t5 = st.tabs(
         ["기본 사용법", "스테로이드 강도", "종류별 안내", "부작용·주의", "자주 묻는 질문"])
@@ -363,3 +292,110 @@ with st.expander("📖 환자 설명서 (전체 안내)"):
             st.markdown(f"**━━ {grp['분류']} ━━**")
             for it in grp["항목"]:
                 st.markdown(f"**Q. {it['Q']}**\n\n{it['A']}")
+
+
+# ─────────────────────────────────────────────
+#  화면 상태
+# ─────────────────────────────────────────────
+if "show_camera" not in st.session_state:
+    st.session_state["show_camera"] = False
+if "view" not in st.session_state:
+    st.session_state["view"] = "home"
+
+# 환자 설명서 전용 화면
+if st.session_state["view"] == "guide":
+    if st.button("← 돌아가기", key="guide_back"):
+        st.session_state["view"] = "home"
+        st.rerun()
+    _render_full_guide()
+    st.stop()
+
+current_q = st.session_state.get("search_box", "").strip()
+_render_hero(big=not current_q)
+
+# 검색줄: 입력창 + 카메라 아이콘(한 줄)
+c_in, c_cam = st.columns([5, 1])
+with c_in:
+    q = st.text_input(
+        "검색어", key="search_box", label_visibility="collapsed",
+        placeholder="검색어를 입력하세요",
+    )
+with c_cam:
+    if st.button(":material/photo_camera:", key="cam_toggle",
+                 help="약 상자 촬영으로 검색"):
+        st.session_state["show_camera"] = not st.session_state["show_camera"]
+
+# 검색창 바로 아래: 환자 설명서 버튼
+if st.button("📖 환자 설명서 (전체 안내)", key="open_guide",
+             use_container_width=True):
+    st.session_state["view"] = "guide"
+    st.rerun()
+
+# 카메라(OCR) 영역
+if st.session_state["show_camera"]:
+    if not ocr.is_configured():
+        st.info("카메라 인식(OCR)을 쓰려면 관리자가 Vision API 키를 설정해야 합니다. "
+                "지금은 위 검색창에 이름을 직접 입력해 주세요.")
+    else:
+        st.caption("약 상자·튜브의 제품명이 잘 보이게 촬영하세요.")
+        photo = st.camera_input("약 상자 촬영", label_visibility="collapsed")
+        if photo is not None:
+            with st.spinner("글자 인식 중..."):
+                try:
+                    text = ocr.ocr_text(photo.getvalue())
+                except ocr.OCRError as e:
+                    text = ""
+                    st.error(f"인식 실패: {e}")
+            if text:
+                cands = core.match_products_from_text(ROWS, text)
+                if cands:
+                    st.markdown("**인식된 후보 — 눌러서 검색**")
+                    for cand in cands:
+                        if st.button(f"🔍 {cand}", key=f"cand_{cand}"):
+                            st.session_state["search_box"] = cand
+                            st.session_state["show_camera"] = False
+                            st.rerun()
+                else:
+                    st.warning("일치하는 약을 찾지 못했습니다. "
+                               "아래 인식된 글자를 참고해 직접 검색해 보세요.")
+                with st.expander("인식된 전체 글자 보기"):
+                    st.code(text, language=None)
+
+q_stripped = q.strip()
+
+# 분류 필터: 검색어가 있을 때만 결과 위에 노출
+if q_stripped:
+    cat_label = st.selectbox("분류 필터", list(FILTER_OPTIONS.keys()), index=0)
+    cat_filter = FILTER_OPTIONS[cat_label]
+else:
+    cat_filter = ""
+
+res = core.search_ointments(ROWS, q_stripped, cat_filter)
+
+# 검색 요약 (스테로이드 등급 안내)
+grades = sorted(
+    {int(r["등급_int"]) for r in res if r.get("등급_int") is not None}
+    | {int(r["복합스테로이드등급"]) for r in res
+       if r.get("복합스테로이드등급") is not None}
+)
+if q_stripped and grades:
+    txt = ", ".join(
+        f"{g}등급({core.GRADE_INFO.get(g, ('', ''))[0]})" for g in grades)
+    st.success(f"'{q_stripped}' → 스테로이드 {txt}")
+
+# 검색어가 있을 때만 결과를 노출(시작 화면을 깔끔하게)
+if q_stripped:
+    st.markdown(f"**검색 결과 {len(res)}건**")
+    if not res:
+        st.info("검색 결과가 없습니다. 성분명(국문/영문)이나 제품명 일부로 검색해 보세요.")
+    else:
+        shown = res[:MAX_SHOW]
+        if len(res) > MAX_SHOW:
+            st.caption(f"많은 결과 중 상위 {MAX_SHOW}건만 표시합니다. "
+                       "검색어로 더 좁혀 보세요.")
+        for row in shown:
+            with st.expander(_s(row.get("제품명"))):
+                _render_detail(row)
+
+# 면책 문구(항상 작게 표시)
+st.caption(core.PATIENT_GUIDE["메타"]["면책"])

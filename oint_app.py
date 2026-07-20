@@ -237,8 +237,8 @@ def _render_hero(big: bool):
         )
     if big:
         st.markdown(
-            "<div class='sr-tagline'>시판 연고를 이름으로 검색하거나 "
-            "약 상자를 촬영해 찾아보세요</div>",
+            "<div class='sr-tagline'>연고를 이름으로 검색하거나 "
+            "사진으로 촬영하세요</div>",
             unsafe_allow_html=True,
         )
 

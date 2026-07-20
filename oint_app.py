@@ -8,16 +8,33 @@
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+
 import streamlit as st
 
 import oint_core as core
+import ocr
 
 
 # ─────────────────────────────────────────────
 #  기본 설정
 # ─────────────────────────────────────────────
-st.set_page_config(page_title="시판 연고 분류 조회기", page_icon="🧴",
+st.set_page_config(page_title="SR oint · 시판 연고 조회기", page_icon="🦉",
                    layout="centered")
+
+ASSETS = Path(__file__).parent / "assets"
+ACCENT_GREEN = "#4CC98A"
+
+
+@st.cache_data(show_spinner=False)
+def _logo_data_uri() -> str:
+    """로고 PNG를 base64 data URI로 반환. 없으면 빈 문자열."""
+    p = ASSETS / "logo.png"
+    if not p.exists():
+        return ""
+    b64 = base64.b64encode(p.read_bytes()).decode()
+    return f"data:image/png;base64,{b64}"
 
 
 @st.cache_data(show_spinner=False)
@@ -150,19 +167,121 @@ def _render_detail(row: dict):
 
 
 # ─────────────────────────────────────────────
-#  헤더
+#  스타일 (브랜딩)
 # ─────────────────────────────────────────────
-st.title("🧴 시판 연고 분류 조회기")
-st.caption("피부 외용제(연고·크림·로션 등)를 성분·제품명으로 검색하세요. "
-           f"현재 {NOTES[0]}, {NOTES[1]} 수록.")
-st.caption(core.PATIENT_GUIDE["메타"]["면책"])
+st.markdown(
+    f"""
+    <style>
+      .stApp {{ background:#f6f9f6; }}
+      .block-container {{ padding-top:2.2rem; }}
+      /* 브랜드 타이틀 */
+      .sr-brand {{ text-align:center; font-weight:800; letter-spacing:1px;
+                   line-height:1.1; margin:0.2rem 0 0.4rem; }}
+      .sr-brand .sr {{ color:{ACCENT_GREEN}; }}
+      .sr-brand .oint {{ color:#1f2933; }}
+      .sr-logo {{ display:block; margin:0.2rem auto 0.6rem; }}
+      .sr-tagline {{ text-align:center; color:#7b8a83; margin-bottom:0.8rem; }}
+      /* 검색창을 둥근 알약 모양으로 */
+      div[data-testid="stTextInput"] input {{
+          border-radius:26px; border:2px solid #a9dcc4;
+          padding:12px 20px; font-size:1.05rem; background:#ffffff;
+      }}
+      div[data-testid="stTextInput"] input:focus {{
+          border-color:{ACCENT_GREEN};
+          box-shadow:0 0 0 2px rgba(76,201,138,0.2);
+      }}
+      /* 카메라 버튼 */
+      div[data-testid="column"]:nth-of-type(2) div.stButton > button {{
+          border-radius:26px; height:48px; width:100%;
+          border:2px solid #a9dcc4; background:#ffffff; font-size:1.3rem;
+      }}
+      div[data-testid="column"]:nth-of-type(2) div.stButton > button:hover {{
+          border-color:{ACCENT_GREEN}; background:#f0fbf5;
+      }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def _render_hero(big: bool):
+    """SR oint 로고 + 타이틀 히어로."""
+    uri = _logo_data_uri()
+    title_size = "3rem" if big else "1.9rem"
+    logo_w = 230 if big else 96
+    st.markdown(
+        f"<div class='sr-brand' style='font-size:{title_size}'>"
+        f"<span class='sr'>SR</span> <span class='oint'>oint</span></div>",
+        unsafe_allow_html=True,
+    )
+    if uri:
+        st.markdown(
+            f"<img class='sr-logo' src='{uri}' width='{logo_w}'/>",
+            unsafe_allow_html=True,
+        )
+    if big:
+        st.markdown(
+            "<div class='sr-tagline'>시판 연고를 이름으로 검색하거나 "
+            "약 상자를 촬영해 찾아보세요</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ─────────────────────────────────────────────
-#  검색 / 필터
+#  검색 상태
 # ─────────────────────────────────────────────
-q = st.text_input("검색어 (성분명·제품명)", placeholder="예: 베타메타손, 겐트리손, 후시딘")
-cat_label = st.selectbox("분류 필터", list(FILTER_OPTIONS.keys()), index=0)
+if "show_camera" not in st.session_state:
+    st.session_state["show_camera"] = False
+
+current_q = st.session_state.get("search_box", "").strip()
+_render_hero(big=not current_q)
+
+# 검색줄: 입력창 + 카메라 버튼
+c_in, c_cam = st.columns([5, 1])
+with c_in:
+    q = st.text_input(
+        "검색어", key="search_box", label_visibility="collapsed",
+        placeholder="검색어를 입력하세요",
+    )
+with c_cam:
+    if st.button("📷", key="cam_toggle", help="약 상자 촬영으로 검색"):
+        st.session_state["show_camera"] = not st.session_state["show_camera"]
+
+# 카메라(OCR) 영역
+if st.session_state["show_camera"]:
+    if not ocr.is_configured():
+        st.info("카메라 인식(OCR)을 쓰려면 관리자가 Vision API 키를 설정해야 합니다. "
+                "지금은 위 검색창에 이름을 직접 입력해 주세요.")
+    else:
+        st.caption("약 상자·튜브의 제품명이 잘 보이게 촬영하세요.")
+        photo = st.camera_input("약 상자 촬영", label_visibility="collapsed")
+        if photo is not None:
+            with st.spinner("글자 인식 중..."):
+                try:
+                    text = ocr.ocr_text(photo.getvalue())
+                except ocr.OCRError as e:
+                    text = ""
+                    st.error(f"인식 실패: {e}")
+            if text:
+                cands = core.match_products_from_text(ROWS, text)
+                if cands:
+                    st.markdown("**인식된 후보 — 눌러서 검색**")
+                    for cand in cands:
+                        if st.button(f"🔍 {cand}", key=f"cand_{cand}"):
+                            st.session_state["search_box"] = cand
+                            st.session_state["show_camera"] = False
+                            st.rerun()
+                else:
+                    st.warning("일치하는 약을 찾지 못했습니다. "
+                               "아래 인식된 글자를 참고해 직접 검색해 보세요.")
+                with st.expander("인식된 전체 글자 보기"):
+                    st.code(text, language=None)
+
+# 분류 필터 + 안내
+with st.expander("분류 필터 · 정보", expanded=False):
+    cat_label = st.selectbox("분류 필터", list(FILTER_OPTIONS.keys()), index=0)
+    st.caption(f"현재 {NOTES[0]}, {NOTES[1]} 수록.")
+    st.caption(core.PATIENT_GUIDE["메타"]["면책"])
 cat_filter = FILTER_OPTIONS[cat_label]
 
 res = core.search_ointments(ROWS, q.strip(), cat_filter)
@@ -178,17 +297,19 @@ if q.strip() and grades:
         f"{g}등급({core.GRADE_INFO.get(g, ('', ''))[0]})" for g in grades)
     st.success(f"'{q.strip()}' → 스테로이드 {txt}")
 
-st.markdown(f"**검색 결과 {len(res)}건**")
-if not res:
-    st.info("검색 결과가 없습니다. 성분명(국문/영문)이나 제품명 일부로 검색해 보세요.")
-else:
-    shown = res[:MAX_SHOW]
-    if len(res) > MAX_SHOW:
-        st.caption(f"많은 결과 중 상위 {MAX_SHOW}건만 표시합니다. "
-                   "검색어로 더 좁혀 보세요.")
-    for row in shown:
-        with st.expander(_s(row.get("제품명"))):
-            _render_detail(row)
+# 검색어나 필터가 있을 때만 결과를 노출(시작 화면을 깔끔하게)
+if q.strip() or cat_filter:
+    st.markdown(f"**검색 결과 {len(res)}건**")
+    if not res:
+        st.info("검색 결과가 없습니다. 성분명(국문/영문)이나 제품명 일부로 검색해 보세요.")
+    else:
+        shown = res[:MAX_SHOW]
+        if len(res) > MAX_SHOW:
+            st.caption(f"많은 결과 중 상위 {MAX_SHOW}건만 표시합니다. "
+                       "검색어로 더 좁혀 보세요.")
+        for row in shown:
+            with st.expander(_s(row.get("제품명"))):
+                _render_detail(row)
 
 
 # ─────────────────────────────────────────────

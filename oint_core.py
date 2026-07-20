@@ -1038,3 +1038,62 @@ def search_ointments(rows, query="", cat_filter=""):
     res.sort(key=lambda r: _s(r.get("분류코드", "")))
     res.sort(key=lambda r: _s(r.get("구분", "")), reverse=True)
     return res
+
+
+# 제품명 끝에 붙는 제형 접미어 (브랜드명만 뽑을 때 제거)
+_DOSAGE_SUFFIXES = (
+    "카타플라스마", "외용액", "점안액", "점안", "스프레이", "겔", "연고",
+    "크림", "로션", "액", "밀크로션", "패취", "패치",
+)
+
+
+def _brand_of(product_name: str) -> str:
+    """제품명에서 괄호·용량 정보를 뗀 브랜드 부분을 반환.
+
+    예) "프로솔로션(클로베타솔프로피오네이트)_(55mg/110mL)" -> "프로솔로션"
+    """
+    name = _s(product_name)
+    for sep in ("(", "_", "[", "/"):
+        name = name.split(sep)[0]
+    return name.strip()
+
+
+def _strip_dosage(brand: str) -> str:
+    """브랜드명 끝의 제형 접미어를 한 번 제거. 예) "프로솔로션" -> "프로솔"."""
+    for suf in _DOSAGE_SUFFIXES:
+        if brand.endswith(suf) and len(brand) > len(suf) + 1:
+            return brand[: -len(suf)]
+    return brand
+
+
+def match_products_from_text(rows, ocr_text, limit=8):
+    """카메라 OCR 텍스트에서 등장하는 제품 브랜드/성분 후보를 점수순으로 반환.
+
+    - UI 비의존. 데스크톱/웹 공용.
+    - 반환: 검색어로 바로 쓸 수 있는 문자열 후보 리스트(중복 제거, 긴 것 우선).
+    """
+    text = _norm(ocr_text)
+    if not text:
+        return []
+
+    # 후보 문자열 -> 매칭 길이(점수). 긴 매칭일수록 더 구체적.
+    scored: dict[str, int] = {}
+
+    def _consider(cand: str):
+        cand = _s(cand)
+        cn = _norm(cand)
+        if len(cn) >= 2 and cn in text:
+            if cand not in scored or len(cn) > scored[cand]:
+                scored[cand] = len(cn)
+
+    for r in rows:
+        brand = _brand_of(r.get("제품명"))
+        if brand:
+            _consider(brand)
+            stripped = _strip_dosage(brand)
+            if stripped != brand:
+                _consider(stripped)
+        _consider(r.get("성분(국문)"))
+
+    ordered = sorted(scored, key=lambda c: scored[c], reverse=True)
+    return ordered[:limit]

@@ -200,7 +200,7 @@ st.markdown(
       /* 검색창을 둥근 알약 모양으로 */
       div[data-testid="stTextInput"] input {{
           border-radius:26px; border:2px solid #a9dcc4;
-          padding:12px 20px; font-size:1.05rem; background:#ffffff;
+          padding:12px 16px; font-size:1.05rem; background:#ffffff;
       }}
       div[data-testid="stTextInput"] input:focus {{
           border-color:{ACCENT_GREEN};
@@ -209,6 +209,10 @@ st.markdown(
       /* 검색줄: 모바일에서도 가로 배치 유지(세로로 쌓이지 않게) */
       div[data-testid="stHorizontalBlock"] {{
           flex-wrap:nowrap; align-items:center; gap:0.4rem;
+      }}
+      /* 컬럼이 화면 밖으로 넘치지 않게 축소 허용(왼쪽 밀림 방지) */
+      div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
+          min-width:0 !important;
       }}
       /* 카메라 아이콘 버튼(검색창 오른쪽, 정사각 알약형) */
       div[data-testid="column"]:nth-of-type(2) div.stButton > button {{

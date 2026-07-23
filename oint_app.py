@@ -184,9 +184,19 @@ st.markdown(
           display:none !important; visibility:hidden !important;
       }}
 
-      /* 좌우 스와이프 시 화면 밀림 방지(세로 스크롤은 유지) */
-      html, body, .stApp {{ overflow-x:hidden !important; max-width:100%; }}
-      body {{ overscroll-behavior-x:none; }}
+      /* 좌우 스와이프 시 화면 밀림 방지(세로 스크롤은 유지).
+         iOS Safari에서는 body가 아니라 실제 스크롤 컨테이너
+         (stAppViewContainer / stMain)에 걸어야 가로 패닝이 막힌다. */
+      html, body, .stApp,
+      [data-testid="stAppViewContainer"],
+      section[data-testid="stMain"], .main, .block-container {{
+          overflow-x:hidden !important; max-width:100vw;
+      }}
+      body, [data-testid="stAppViewContainer"],
+      section[data-testid="stMain"], .main {{
+          overscroll-behavior-x:none;
+          touch-action:pan-y pinch-zoom;
+      }}
 
       .stApp {{ background:#f6f9f6; }}
       .block-container {{ padding-top:1.4rem; }}
@@ -206,23 +216,30 @@ st.markdown(
           border-color:{ACCENT_GREEN};
           box-shadow:0 0 0 2px rgba(76,201,138,0.2);
       }}
-      /* 검색줄: 모바일에서도 가로 배치 유지(세로로 쌓이지 않게) */
+      /* 검색줄: 모바일에서도 가로 배치 유지(세로로 쌓이지 않게).
+         max-width로 행 자체가 화면 폭을 넘지 않게 고정(가로 밀림 원인 제거) */
       div[data-testid="stHorizontalBlock"] {{
           flex-wrap:nowrap; align-items:center; gap:0.4rem;
+          max-width:100%; overflow-x:hidden;
       }}
-      /* 컬럼이 화면 밖으로 넘치지 않게 축소 허용(왼쪽 밀림 방지) */
-      div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
+      /* 컬럼이 화면 밖으로 넘치지 않게 축소 허용(왼쪽 밀림 방지).
+         Streamlit 신버전은 data-testid="stColumn", 구버전은 "column" */
+      div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+      div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {{
           min-width:0 !important;
       }}
       /* 카메라 아이콘 버튼(검색창 오른쪽, 정사각 알약형) */
-      div[data-testid="column"]:nth-of-type(2) div.stButton > button {{
+      div[data-testid="column"]:nth-of-type(2) div.stButton > button,
+      div[data-testid="stColumn"]:nth-of-type(2) div.stButton > button {{
           border-radius:50%; height:48px; width:48px; min-height:48px;
           padding:0; border:2px solid #a9dcc4; background:#ffffff;
       }}
-      div[data-testid="column"]:nth-of-type(2) div.stButton > button:hover {{
+      div[data-testid="column"]:nth-of-type(2) div.stButton > button:hover,
+      div[data-testid="stColumn"]:nth-of-type(2) div.stButton > button:hover {{
           border-color:{ACCENT_GREEN}; background:#f0fbf5;
       }}
-      div[data-testid="column"]:nth-of-type(2) div.stButton > button span {{
+      div[data-testid="column"]:nth-of-type(2) div.stButton > button span,
+      div[data-testid="stColumn"]:nth-of-type(2) div.stButton > button span {{
           font-size:1.4rem; color:#1f2933;
       }}
     </style>

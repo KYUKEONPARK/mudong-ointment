@@ -12,6 +12,7 @@ import base64
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 import oint_core as core
 import ocr
@@ -228,19 +229,38 @@ st.markdown(
       div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {{
           min-width:0 !important;
       }}
-      /* 카메라 아이콘 버튼(검색창 오른쪽, 정사각 알약형) */
-      div[data-testid="column"]:nth-of-type(2) div.stButton > button,
-      div[data-testid="stColumn"]:nth-of-type(2) div.stButton > button {{
-          border-radius:50%; height:48px; width:48px; min-height:48px;
-          padding:0; border:2px solid #a9dcc4; background:#ffffff;
+      /* 카메라 아이콘(검색창 오른쪽): 파일 업로더를 원형 버튼처럼 표시.
+         탭 한 번에 파일 선택 대화상자(모바일은 카메라)가 열린다 */
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploader"] {{
+          width:48px;
       }}
-      div[data-testid="column"]:nth-of-type(2) div.stButton > button:hover,
-      div[data-testid="stColumn"]:nth-of-type(2) div.stButton > button:hover {{
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderDropzone"] {{
+          position:relative; width:48px; height:48px; min-height:48px;
+          padding:0; border-radius:50%; border:2px solid #a9dcc4;
+          background:#ffffff; display:flex; align-items:center;
+          justify-content:center; cursor:pointer; gap:0;
+      }}
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderDropzone"]:hover {{
           border-color:{ACCENT_GREEN}; background:#f0fbf5;
       }}
-      div[data-testid="column"]:nth-of-type(2) div.stButton > button span,
-      div[data-testid="stColumn"]:nth-of-type(2) div.stButton > button span {{
-          font-size:1.4rem; color:#1f2933;
+      /* 안내문구·내부 아이콘 숨기고 카메라 글리프만 표시 */
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderDropzoneInstructions"] {{
+          display:none;
+      }}
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderDropzone"]::before {{
+          content:'📷'; font-size:1.35rem; line-height:1;
+      }}
+      /* Browse files 버튼은 투명하게 전체를 덮어 탭 영역으로만 사용 */
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderDropzone"] button {{
+          position:absolute; inset:0; width:100%; height:100%;
+          min-height:0; opacity:0; margin:0; padding:0;
+      }}
+      /* 업로드된 파일명 칩·삭제 버튼은 좁은 컬럼에서 숨김(사진은 아래에 표시됨) */
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderFile"],
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderDeleteBtn"],
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploader"] > div:not(:first-child),
+      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploader"] small {{
+          display:none !important;
       }}
     </style>
     """,
@@ -325,8 +345,9 @@ def _render_full_guide():
 # ─────────────────────────────────────────────
 #  화면 상태
 # ─────────────────────────────────────────────
-if "show_camera" not in st.session_state:
-    st.session_state["show_camera"] = False
+# 업로더 리셋용 카운터(값을 올리면 key가 바뀌어 업로더가 비워진다)
+if "cam_key_n" not in st.session_state:
+    st.session_state["cam_key_n"] = 0
 if "view" not in st.session_state:
     st.session_state["view"] = "home"
 
@@ -342,6 +363,7 @@ current_q = st.session_state.get("search_box", "").strip()
 _render_hero(big=not current_q)
 
 # 검색줄: 입력창 + 카메라 아이콘(한 줄)
+# 카메라 아이콘은 촬영 전용 업로더(탭 한 번에 폰 카메라가 바로 열림)
 c_in, c_cam = st.columns([5, 1])
 with c_in:
     q = st.text_input(
@@ -349,9 +371,34 @@ with c_in:
         placeholder="검색어를 입력하세요",
     )
 with c_cam:
-    if st.button(":material/photo_camera:", key="cam_toggle",
-                 help="약 상자 촬영으로 검색"):
-        st.session_state["show_camera"] = not st.session_state["show_camera"]
+    uploaded = st.file_uploader(
+        "약 상자 촬영으로 검색", type=["jpg", "jpeg", "png"],
+        key=f"cam_file_{st.session_state['cam_key_n']}",
+        label_visibility="collapsed")
+
+# 숨은 file input에 카메라 직행 속성 주입(모바일: 탭 즉시 카메라 열림).
+# Streamlit이 rerun마다 DOM을 다시 그리므로 MutationObserver로 재적용한다.
+components.html(
+    """
+    <script>
+      const doc = window.parent.document;
+      function patchCameraInput() {
+        doc.querySelectorAll(
+          '[data-testid="stFileUploaderDropzone"] input[type=file]'
+        ).forEach(inp => {
+          if (inp.getAttribute('capture') !== 'environment') {
+            inp.setAttribute('accept', 'image/*');
+            inp.setAttribute('capture', 'environment');
+          }
+        });
+      }
+      patchCameraInput();
+      new MutationObserver(patchCameraInput)
+        .observe(doc.body, {subtree: true, childList: true});
+    </script>
+    """,
+    height=0,
+)
 
 # 검색창 바로 아래: 환자 설명서 버튼
 if st.button("📖 환자 설명서 (전체 안내)", key="open_guide",
@@ -359,39 +406,33 @@ if st.button("📖 환자 설명서 (전체 안내)", key="open_guide",
     st.session_state["view"] = "guide"
     st.rerun()
 
-# 카메라(OCR) 영역
-if st.session_state["show_camera"]:
+# 카메라(OCR) 영역: 촬영/선택된 사진이 있으면 바로 인식
+if uploaded is not None:
     if not ocr.is_configured():
         st.info("카메라 인식(OCR)을 쓰려면 관리자가 Vision API 키를 설정해야 합니다. "
                 "지금은 위 검색창에 이름을 직접 입력해 주세요.")
     else:
-        st.caption("아래 버튼을 눌러 약 상자를 촬영하거나 사진을 선택하세요. "
-                   "(제품명이 잘 보이게 찍어 주세요)")
-        uploaded = st.file_uploader(
-            "사진 촬영 또는 선택", type=["jpg", "jpeg", "png"],
-            key="cam_file", label_visibility="collapsed")
-        if uploaded is not None:
-            st.image(uploaded, use_container_width=True)
-            with st.spinner("글자 인식 중..."):
-                try:
-                    text = ocr.ocr_text(uploaded.getvalue())
-                except ocr.OCRError as e:
-                    text = ""
-                    st.error(f"인식 실패: {e}")
-            if text:
-                cands = core.match_products_from_text(ROWS, text)
-                if cands:
-                    st.markdown("**인식된 후보 — 눌러서 검색**")
-                    for cand in cands:
-                        if st.button(f"🔍 {cand}", key=f"cand_{cand}"):
-                            st.session_state["search_box"] = cand
-                            st.session_state["show_camera"] = False
-                            st.rerun()
-                else:
-                    st.warning("일치하는 약을 찾지 못했습니다. "
-                               "아래 인식된 글자를 참고해 직접 검색해 보세요.")
-                with st.expander("인식된 전체 글자 보기"):
-                    st.code(text, language=None)
+        st.image(uploaded, use_container_width=True)
+        with st.spinner("글자 인식 중..."):
+            try:
+                text = ocr.ocr_text(uploaded.getvalue())
+            except ocr.OCRError as e:
+                text = ""
+                st.error(f"인식 실패: {e}")
+        if text:
+            cands = core.match_products_from_text(ROWS, text)
+            if cands:
+                st.markdown("**인식된 후보 — 눌러서 검색**")
+                for cand in cands:
+                    if st.button(f"🔍 {cand}", key=f"cand_{cand}"):
+                        st.session_state["search_box"] = cand
+                        st.session_state["cam_key_n"] += 1  # 업로더 리셋
+                        st.rerun()
+            else:
+                st.warning("일치하는 약을 찾지 못했습니다. "
+                           "아래 인식된 글자를 참고해 직접 검색해 보세요.")
+            with st.expander("인식된 전체 글자 보기"):
+                st.code(text, language=None)
 
 q_stripped = q.strip()
 

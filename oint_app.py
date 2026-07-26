@@ -108,69 +108,95 @@ def _row_badges(row: dict) -> str:
     return " ".join(parts)
 
 
-def _copy_text(row: dict, guide: dict) -> str:
-    return (
-        f"[{_s(row.get('제품명'))}]\n"
-        f"{guide['환자안내문']}\n\n"
-        f"바르는 방법: {guide['바르는법']}\n"
-        f"사용 기간: {guide['기간']}"
+def _render_print_button(uid: int):
+    """인쇄 버튼. 클릭 시 해당 상세의 인쇄 영역에 print-target 클래스를
+    부여하고 브라우저 인쇄(window.print)를 연다 — iPhone에서는 AirPrint."""
+    components.html(
+        f"""
+        <style>
+          #printBtn {{
+              width:100%; height:40px; border-radius:10px; cursor:pointer;
+              border:2px solid #a9dcc4; background:#ffffff; color:#1f2933;
+              font-size:0.95rem; font-family:inherit;
+          }}
+          #printBtn:hover {{ border-color:{ACCENT_GREEN}; background:#f0fbf5; }}
+        </style>
+        <button id="printBtn">🖨️ 인쇄</button>
+        <script>
+          document.getElementById('printBtn').addEventListener('click', () => {{
+            const doc = window.parent.document;
+            doc.querySelectorAll('.print-target')
+               .forEach(e => e.classList.remove('print-target'));
+            const target = doc.querySelector('.st-key-print_{uid}');
+            if (target) target.classList.add('print-target');
+            window.parent.print();
+          }});
+        </script>
+        """,
+        height=48,
     )
 
 
-def _render_detail(row: dict):
+def _render_detail(row: dict, uid: int):
     code = _s(row.get("분류코드"))
     guide = core.get_patient_guide(code)
     g, kind = _grade_of(row)
 
-    # 등급 배지
-    badges = _row_badges(row)
-    if badges:
-        st.markdown(badges, unsafe_allow_html=True)
+    # ── 인쇄 대상 영역: 배지 + 제품 정보 + 경고 + 환자 설명 ──
+    with st.container(key=f"print_{uid}"):
+        # 출력물 상단에만 표시되는 약 이름(화면에서는 expander 제목과 중복이라 숨김)
+        st.markdown(
+            f"<div class='print-only'>{_s(row.get('제품명'))}</div>",
+            unsafe_allow_html=True,
+        )
 
-    # 제품 정보
-    info = {
-        "성분(국문)": _md(row.get("성분(국문)")),
-        "성분(영문)": _md(row.get("성분(영문)")),
-        "함량": _md(row.get("함량")),
-        "제형": _md(row.get("제형")),
-        "제조사": _md(row.get("제조사")),
-        "급여·상한가": f"{_md(row.get('급여'))} · {_md(row.get('상한가'))}원",
-        "전문/일반": _md(row.get("전문/일반")),
-        "처방 구분": _md(row.get("처방구분")),
-    }
-    if g is not None:
-        lbl = core.GRADE_INFO.get(g, ("", ""))[0]
-        info["스테로이드 등급"] = f"{g}등급 · {_md(lbl)}"
-    if _s(row.get("비고")):
-        info["비고"] = _md(row.get("비고"))
+        # 등급 배지
+        badges = _row_badges(row)
+        if badges:
+            st.markdown(badges, unsafe_allow_html=True)
 
-    md = "\n".join(f"- **{k}**: {v}" for k, v in info.items() if v)
-    st.markdown(md)
+        # 제품 정보
+        info = {
+            "성분(국문)": _md(row.get("성분(국문)")),
+            "성분(영문)": _md(row.get("성분(영문)")),
+            "함량": _md(row.get("함량")),
+            "제형": _md(row.get("제형")),
+            "급여 여부": _md(row.get("급여")),
+            "상한가": f"{_md(row.get('상한가'))}원" if _s(row.get("상한가")) else "",
+            "전문/일반": _md(row.get("전문/일반")),
+            "처방 구분": _md(row.get("처방구분")),
+        }
+        if g is not None:
+            lbl = core.GRADE_INFO.get(g, ("", ""))[0]
+            info["스테로이드 등급"] = f"{g}등급 · {_md(lbl)}"
+        if _s(row.get("비고")):
+            info["비고"] = _md(row.get("비고"))
 
-    # 1~2등급 경고
-    if g in (1, 2):
-        st.warning("1\\~2등급(초강력·강력)은 안면·간찰부·소아 사용을 피하고 "
-                   "2\\~3주 이내 단기 사용. 폐쇄요법·간찰부에서는 실제 효력이 상향됩니다.")
+        md = "\n".join(f"- **{k}**: {v}" for k, v in info.items() if v)
+        st.markdown(md)
 
-    # 환자 설명
-    st.markdown("##### 환자 설명")
-    st.info(_md(guide["환자안내문"]))
-    st.markdown(f"- **바르는 방법**: {_md(guide['바르는법'])}\n"
-                f"- **사용 기간**: {_md(guide['기간'])}")
-    if guide.get("주의"):
-        st.markdown(f"- **주의사항**: {_md(guide['주의'])}")
+        # 1~2등급 경고
+        if g in (1, 2):
+            st.warning("1\\~2등급(초강력·강력)은 안면·간찰부·소아 사용을 피하고 "
+                       "2\\~3주 이내 단기 사용. 폐쇄요법·간찰부에서는 실제 효력이 상향됩니다.")
 
-    # 관련 Q&A
+        # 환자 설명
+        st.markdown("##### 환자 설명")
+        st.info(_md(guide["환자안내문"]))
+        st.markdown(f"- **바르는 방법**: {_md(guide['바르는법'])}\n"
+                    f"- **사용 기간**: {_md(guide['기간'])}")
+        if guide.get("주의"):
+            st.markdown(f"- **주의사항**: {_md(guide['주의'])}")
+
+    # ── 여기부터 인쇄 제외 ──
+    _render_print_button(uid)
+
+    # 관련 Q&A (화면 표시만, 인쇄 안 됨)
     qnas = core.get_qna_for_category(code)
     if qnas:
         st.markdown("##### 이 약 관련 자주 묻는 질문")
         for qa in qnas:
             st.markdown(f"**Q. {_md(qa['Q'])}**\n\n{_md(qa['A'])}")
-
-    # 복사용 텍스트
-    st.markdown("##### 환자 안내문 복사")
-    st.caption("아래 상자 오른쪽 위 아이콘을 눌러 복사하세요.")
-    st.code(_copy_text(row, guide), language=None)
 
 
 # ─────────────────────────────────────────────
@@ -267,6 +293,20 @@ st.markdown(
       div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploader"] > div:not(:first-child),
       div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploader"] small {{
           display:none !important;
+      }}
+
+      /* 인쇄: 인쇄 버튼이 지정한 .print-target 영역만 종이에 나온다 */
+      .print-only {{ display:none; }}
+      @media print {{
+          body * {{ visibility:hidden; }}
+          .print-target, .print-target * {{ visibility:visible; }}
+          .print-target {{
+              position:absolute; top:0; left:0; width:100%;
+          }}
+          .print-only {{
+              display:block; font-size:1.3rem; font-weight:800;
+              margin-bottom:0.4rem;
+          }}
       }}
     </style>
     """,
@@ -477,9 +517,9 @@ if q_stripped:
         if len(res) > MAX_SHOW:
             st.caption(f"많은 결과 중 상위 {MAX_SHOW}건만 표시합니다. "
                        "검색어로 더 좁혀 보세요.")
-        for row in shown:
+        for i, row in enumerate(shown):
             with st.expander(_s(row.get("제품명"))):
-                _render_detail(row)
+                _render_detail(row, uid=i)
 
 # 면책 문구(항상 작게 표시)
 st.caption(core.PATIENT_GUIDE["메타"]["면책"])

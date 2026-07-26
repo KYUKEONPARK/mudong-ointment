@@ -1069,6 +1069,51 @@ def _strip_dosage(brand: str) -> str:
     return brand
 
 
+def _matched_brand_frags(rows, text):
+    """정규화 텍스트에 매칭된 브랜드 후보(정규화 문자열 -> 매칭 길이).
+
+    - 완전 포함: 브랜드/제형 접미어 strip 브랜드가 텍스트에 통째로 등장(2자 이상).
+    - 부분 일치 보강: DB 제품명에는 제조사 접두어가 붙는 경우가 있어(예:
+      "삼아리도멕스크림") 약 상자의 큰 글씨("리도멕스")와 완전 일치하지 않는다.
+      최장 공통 부분문자열이 한글/영문 4자 이상이면 그 조각을 후보로 등록한다.
+    """
+    found: dict[str, int] = {}
+
+    def _add(frag: str, size: int):
+        if frag not in found or size > found[frag]:
+            found[frag] = size
+
+    for r in rows:
+        brand = _brand_of(r.get("제품명"))
+        if not brand:
+            continue
+        for cand in {brand, _strip_dosage(brand)}:
+            cn = _norm(cand)
+            if len(cn) >= 2 and cn in text:
+                _add(cn, len(cn))
+        bn = _norm(brand)
+        if len(bn) >= 4:
+            m = difflib.SequenceMatcher(None, bn, text, autojunk=False) \
+                .find_longest_match(0, len(bn), 0, len(text))
+            if 4 <= m.size < len(bn):
+                frag = bn[m.a:m.a + m.size]
+                # 숫자·기호 조각("0.3%" 등) 배제 — 한글/영문 조각만 인정
+                if re.fullmatch(r"[가-힣a-z]+", frag):
+                    _add(frag, m.size)
+    return found
+
+
+def _matched_ingredients(rows, text):
+    """정규화 텍스트에 등장하는 성분(국문) 후보(원문 -> 정규화 문자열)."""
+    found: dict[str, str] = {}
+    for r in rows:
+        cand = _s(r.get("성분(국문)"))
+        cn = _norm(cand)
+        if len(cn) >= 2 and cn in text:
+            found[cand] = cn
+    return found
+
+
 def match_products_from_text(rows, ocr_text, limit=8):
     """카메라 OCR 텍스트에서 등장하는 제품 브랜드/성분 후보를 점수순으로 반환.
 
@@ -1084,44 +1129,46 @@ def match_products_from_text(rows, ocr_text, limit=8):
     # 브랜드명이 항상 우선한다(예: 아드반탄 > 메틸프레드니솔론아세포네이트).
     # 브랜드가 하나도 안 잡히면 성분명이 폴백으로 1순위가 된다.
     scored: dict[str, tuple[int, int]] = {}
-
-    def _consider(cand: str, is_brand: bool):
-        cand = _s(cand)
-        cn = _norm(cand)
-        if len(cn) >= 2 and cn in text:
-            key = (1 if is_brand else 0, len(cn))
-            if cand not in scored or key > scored[cand]:
-                scored[cand] = key
-
-    def _consider_partial_brand(brand: str):
-        """브랜드가 통째로는 텍스트에 없을 때의 보강.
-
-        DB 제품명에는 제조사 접두어가 붙는 경우가 있어(예: "삼아리도멕스크림")
-        약 상자의 큰 글씨("리도멕스")와 완전 일치하지 않는다. 최장 공통
-        부분문자열이 3자 이상이면 그 부분을 브랜드 후보로 등록한다.
-        """
-        bn = _norm(brand)
-        if len(bn) < 4:
-            return
-        m = difflib.SequenceMatcher(None, bn, text, autojunk=False) \
-            .find_longest_match(0, len(bn), 0, len(text))
-        if 4 <= m.size < len(bn):
-            frag = bn[m.a:m.a + m.size]
-            # 숫자·기호 조각("0.3%" 등) 배제 — 한글/영문으로만 된 조각만 인정
-            if re.fullmatch(r"[가-힣a-z]+", frag):
-                key = (1, m.size)
-                if frag not in scored or key > scored[frag]:
-                    scored[frag] = key
-
-    for r in rows:
-        brand = _brand_of(r.get("제품명"))
-        if brand:
-            _consider(brand, True)
-            stripped = _strip_dosage(brand)
-            if stripped != brand:
-                _consider(stripped, True)
-            _consider_partial_brand(brand)
-        _consider(r.get("성분(국문)"), False)
+    for frag, size in _matched_brand_frags(rows, text).items():
+        scored[frag] = (1, size)
+    for cand, cn in _matched_ingredients(rows, text).items():
+        key = (0, len(cn))
+        if cand not in scored or key > scored[cand]:
+            scored[cand] = key
 
     ordered = sorted(scored, key=lambda c: scored[c], reverse=True)
     return ordered[:limit]
+
+
+def count_distinct_brands(rows, ocr_text):
+    """OCR 텍스트에서 서로 다른 제품 브랜드가 몇 개 보이는지 추정.
+
+    사진에 연고가 2개 이상 찍혔는지 판별하는 용도. 같은 제품에서 나온
+    후보들("삼아리도멕스"·"리도멕스")은 부분문자열 관계이므로 한 그룹으로
+    묶고, 성분명에 포함되는 조각(성분 표기가 제네릭 브랜드명과 겹치는 경우)은
+    별도 제품으로 세지 않는다.
+    """
+    text = _norm(ocr_text)
+    if not text:
+        return 0
+
+    ingredients = set(_matched_ingredients(rows, text).values())
+    frags = set()
+    for f in _matched_brand_frags(rows, text):
+        if any(f in ing for ing in ingredients):
+            continue
+        # "이트크림"처럼 성분 표기와 제형 단어 경계에 걸친 잡음 조각 배제:
+        # 제형 접미어를 떼고도 3자 이상 남아야 브랜드로 인정
+        f = _strip_dosage(f)
+        if len(f) >= 3:
+            frags.add(f)
+
+    groups: list[list[str]] = []
+    for f in sorted(frags, key=len, reverse=True):
+        for grp in groups:
+            if any(f in g or g in f for g in grp):
+                grp.append(f)
+                break
+        else:
+            groups.append([f])
+    return len(groups)

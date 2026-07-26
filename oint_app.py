@@ -471,8 +471,10 @@ if uploaded is not None:
                 text = ""
                 st.error(f"인식 실패: {e}")
         if text:
-            cands = core.match_products_from_text(ROWS, text)
-            if cands:
+            if core.count_distinct_brands(ROWS, text) >= 2:
+                st.warning("사진에 연고가 2개 이상 보여요. "
+                           "1개만 보이게 다시 찍어주세요.")
+            elif cands := core.match_products_from_text(ROWS, text):
                 # 제형 접미어(연고/크림 등)는 떼고 기록: "아드반탄연고" -> "아드반탄".
                 # search_box는 이미 생성된 위젯 key라 직접 수정 불가 →
                 # 임시 키에 담아 rerun 후 위젯 생성 전에 반영한다.

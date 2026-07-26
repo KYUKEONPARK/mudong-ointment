@@ -4,6 +4,9 @@
 데스크톱(oint.py)과 Streamlit(oint_app.py)이 이 모듈을 함께 import 한다.
 """
 
+import difflib
+import re
+
 # ─────────────────────────────────────────────
 # 스테로이드 등급 → (효력 구분, 색상)
 GRADE_INFO = {
@@ -1090,6 +1093,26 @@ def match_products_from_text(rows, ocr_text, limit=8):
             if cand not in scored or key > scored[cand]:
                 scored[cand] = key
 
+    def _consider_partial_brand(brand: str):
+        """브랜드가 통째로는 텍스트에 없을 때의 보강.
+
+        DB 제품명에는 제조사 접두어가 붙는 경우가 있어(예: "삼아리도멕스크림")
+        약 상자의 큰 글씨("리도멕스")와 완전 일치하지 않는다. 최장 공통
+        부분문자열이 3자 이상이면 그 부분을 브랜드 후보로 등록한다.
+        """
+        bn = _norm(brand)
+        if len(bn) < 4:
+            return
+        m = difflib.SequenceMatcher(None, bn, text, autojunk=False) \
+            .find_longest_match(0, len(bn), 0, len(text))
+        if 4 <= m.size < len(bn):
+            frag = bn[m.a:m.a + m.size]
+            # 숫자·기호 조각("0.3%" 등) 배제 — 한글/영문으로만 된 조각만 인정
+            if re.fullmatch(r"[가-힣a-z]+", frag):
+                key = (1, m.size)
+                if frag not in scored or key > scored[frag]:
+                    scored[frag] = key
+
     for r in rows:
         brand = _brand_of(r.get("제품명"))
         if brand:
@@ -1097,6 +1120,7 @@ def match_products_from_text(rows, ocr_text, limit=8):
             stripped = _strip_dosage(brand)
             if stripped != brand:
                 _consider(stripped, True)
+            _consider_partial_brand(brand)
         _consider(r.get("성분(국문)"), False)
 
     ordered = sorted(scored, key=lambda c: scored[c], reverse=True)

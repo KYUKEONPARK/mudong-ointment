@@ -406,13 +406,13 @@ if st.button("📖 환자 설명서 (전체 안내)", key="open_guide",
     st.session_state["view"] = "guide"
     st.rerun()
 
-# 카메라(OCR) 영역: 촬영/선택된 사진이 있으면 바로 인식
+# 카메라(OCR) 영역: 촬영/선택된 사진이 있으면 사진 표시 없이 바로 인식,
+# 1순위 후보(가장 긴 매칭)를 검색창에 자동 입력한다.
 if uploaded is not None:
     if not ocr.is_configured():
         st.info("카메라 인식(OCR)을 쓰려면 관리자가 Vision API 키를 설정해야 합니다. "
                 "지금은 위 검색창에 이름을 직접 입력해 주세요.")
     else:
-        st.image(uploaded, use_container_width=True)
         with st.spinner("글자 인식 중..."):
             try:
                 text = ocr.ocr_text(uploaded.getvalue())
@@ -422,17 +422,15 @@ if uploaded is not None:
         if text:
             cands = core.match_products_from_text(ROWS, text)
             if cands:
-                st.markdown("**인식된 후보 — 눌러서 검색**")
-                for cand in cands:
-                    if st.button(f"🔍 {cand}", key=f"cand_{cand}"):
-                        st.session_state["search_box"] = cand
-                        st.session_state["cam_key_n"] += 1  # 업로더 리셋
-                        st.rerun()
+                # 제형 접미어(연고/크림 등)는 떼고 기록: "아드반탄연고" -> "아드반탄"
+                st.session_state["search_box"] = core._strip_dosage(cands[0])
+                st.session_state["cam_key_n"] += 1  # 업로더 리셋
+                st.rerun()
             else:
                 st.warning("일치하는 약을 찾지 못했습니다. "
                            "아래 인식된 글자를 참고해 직접 검색해 보세요.")
-            with st.expander("인식된 전체 글자 보기"):
-                st.code(text, language=None)
+                with st.expander("인식된 전체 글자 보기"):
+                    st.code(text, language=None)
 
 q_stripped = q.strip()
 

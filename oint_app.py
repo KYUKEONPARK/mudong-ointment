@@ -359,6 +359,11 @@ if st.session_state["view"] == "guide":
     _render_full_guide()
     st.stop()
 
+# 카메라(OCR)가 넘긴 검색어를 위젯 생성 전에 반영.
+# (위젯 생성 후 search_box를 수정하면 StreamlitAPIException)
+if "pending_search" in st.session_state:
+    st.session_state["search_box"] = st.session_state.pop("pending_search")
+
 current_q = st.session_state.get("search_box", "").strip()
 _render_hero(big=not current_q)
 
@@ -422,8 +427,10 @@ if uploaded is not None:
         if text:
             cands = core.match_products_from_text(ROWS, text)
             if cands:
-                # 제형 접미어(연고/크림 등)는 떼고 기록: "아드반탄연고" -> "아드반탄"
-                st.session_state["search_box"] = core._strip_dosage(cands[0])
+                # 제형 접미어(연고/크림 등)는 떼고 기록: "아드반탄연고" -> "아드반탄".
+                # search_box는 이미 생성된 위젯 key라 직접 수정 불가 →
+                # 임시 키에 담아 rerun 후 위젯 생성 전에 반영한다.
+                st.session_state["pending_search"] = core._strip_dosage(cands[0])
                 st.session_state["cam_key_n"] += 1  # 업로더 리셋
                 st.rerun()
             else:

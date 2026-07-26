@@ -1076,24 +1076,28 @@ def match_products_from_text(rows, ocr_text, limit=8):
     if not text:
         return []
 
-    # 후보 문자열 -> 매칭 길이(점수). 긴 매칭일수록 더 구체적.
-    scored: dict[str, int] = {}
+    # 후보 문자열 -> (브랜드 여부, 매칭 길이) 점수.
+    # 약 상자에는 브랜드명과 성분명이 함께 인쇄되므로, 성분명이 아무리 길어도
+    # 브랜드명이 항상 우선한다(예: 아드반탄 > 메틸프레드니솔론아세포네이트).
+    # 브랜드가 하나도 안 잡히면 성분명이 폴백으로 1순위가 된다.
+    scored: dict[str, tuple[int, int]] = {}
 
-    def _consider(cand: str):
+    def _consider(cand: str, is_brand: bool):
         cand = _s(cand)
         cn = _norm(cand)
         if len(cn) >= 2 and cn in text:
-            if cand not in scored or len(cn) > scored[cand]:
-                scored[cand] = len(cn)
+            key = (1 if is_brand else 0, len(cn))
+            if cand not in scored or key > scored[cand]:
+                scored[cand] = key
 
     for r in rows:
         brand = _brand_of(r.get("제품명"))
         if brand:
-            _consider(brand)
+            _consider(brand, True)
             stripped = _strip_dosage(brand)
             if stripped != brand:
-                _consider(stripped)
-        _consider(r.get("성분(국문)"))
+                _consider(stripped, True)
+        _consider(r.get("성분(국문)"), False)
 
     ordered = sorted(scored, key=lambda c: scored[c], reverse=True)
     return ordered[:limit]

@@ -1114,6 +1114,79 @@ def _matched_ingredients(rows, text):
     return found
 
 
+_FUZZY_RATIO = 0.75  # 자모 단위 유사도 임계값
+
+
+def _jamo(s: str) -> str:
+    """한글 음절을 자모로 분해. OCR 오독은 대개 자모 일부만 틀리므로
+    ("멕"→"메") 자모 단위로 비교해야 유사도가 정확히 나온다."""
+    out = []
+    for ch in s:
+        code = ord(ch)
+        if 0xAC00 <= code <= 0xD7A3:
+            code -= 0xAC00
+            cho, jung, jong = code // 588, (code % 588) // 28, code % 28
+            out.append(chr(0x1100 + cho))
+            out.append(chr(0x1161 + jung))
+            if jong:
+                out.append(chr(0x11A7 + jong))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _fuzzy_brand_matches(rows, ocr_text):
+    """OCR 오독을 견디는 유사도 기반 브랜드 매칭(정확 매칭 실패 시 폴백용).
+
+    상표 로고의 스타일된 글씨는 OCR이 자주 틀린다(예: "삼아 리도멕스" →
+    "아리도메스"). OCR 각 줄(한글/영문만 남김)과 DB 브랜드명의 자모 단위
+    유사도가 _FUZZY_RATIO 이상이면 해당 DB 브랜드(제형 접미어 strip)를
+    후보로 반환. 줄마다 가장 유사한 브랜드 하나만 채택해 잡음을 줄인다.
+    """
+    text = _norm(ocr_text)
+    # 성분명이 그대로 적힌 줄은 제외(성분 유래 제네릭 브랜드 오탐 방지)
+    ingredients = set(_matched_ingredients(rows, text).values())
+
+    found: dict[str, int] = {}
+    for line in str(ocr_text or "").splitlines():
+        cleaned = re.sub(r"[^가-힣a-z]", "", _norm(line))
+        if len(cleaned) < 4:
+            continue
+        if any(cleaned in ing or ing in cleaned for ing in ingredients):
+            continue
+        best = None  # (ratio, len, brand)
+        for r in rows:
+            brand = _brand_of(r.get("제품명"))
+            # 제형 접미어(크림/로션 등)를 뗀 변형과도 비교해야 상자의
+            # 큰 글씨(접미어 없음)와의 유사도가 제대로 나온다
+            for variant in {brand, _strip_dosage(brand)}:
+                bn = re.sub(r"[^가-힣a-z]", "", _norm(variant))
+                if len(bn) < 4 or abs(len(bn) - len(cleaned)) > len(bn):
+                    continue
+                # 줄이 브랜드보다 길면 브랜드 길이 창을 밀며 최고 유사도 탐색
+                windows = (
+                    [cleaned] if len(cleaned) <= len(bn) + 2 else
+                    [cleaned[i:i + len(bn) + 1]
+                     for i in range(len(cleaned) - len(bn))]
+                )
+                bj = _jamo(bn)
+                for w in windows:
+                    sm = difflib.SequenceMatcher(None, bj, _jamo(w),
+                                                 autojunk=False)
+                    if sm.real_quick_ratio() < _FUZZY_RATIO:
+                        continue
+                    ratio = sm.ratio()
+                    if ratio >= _FUZZY_RATIO:
+                        cand = (ratio, len(bn), _strip_dosage(variant))
+                        if best is None or cand > best:
+                            best = cand
+        if best:
+            _, size, brand = best
+            if brand not in found or size > found[brand]:
+                found[brand] = size
+    return found
+
+
 def match_products_from_text(rows, ocr_text, limit=8):
     """카메라 OCR 텍스트에서 등장하는 제품 브랜드/성분 후보를 점수순으로 반환.
 
@@ -1131,6 +1204,10 @@ def match_products_from_text(rows, ocr_text, limit=8):
     scored: dict[str, tuple[int, int]] = {}
     for frag, size in _matched_brand_frags(rows, text).items():
         scored[frag] = (1, size)
+    if not scored:
+        # 정확 매칭된 브랜드가 없으면 OCR 오독 대비 유사도 매칭으로 폴백
+        for brand, size in _fuzzy_brand_matches(rows, ocr_text).items():
+            scored[brand] = (1, size)
     for cand, cn in _matched_ingredients(rows, text).items():
         key = (0, len(cn))
         if cand not in scored or key > scored[cand]:

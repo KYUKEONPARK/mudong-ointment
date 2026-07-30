@@ -247,9 +247,13 @@ st.markdown(
           position:absolute; inset:0; width:100%; height:100%;
           min-height:0; opacity:0; margin:0; padding:0;
       }}
-      /* 업로드된 파일명 칩·삭제 버튼은 좁은 컬럼에서 숨김(사진은 아래에 표시됨) */
-      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderFile"],
-      div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploaderDeleteBtn"],
+      /* 업로드된 파일명 칩·삭제 버튼 숨김(검색창 옆이 지저분해 보이지 않게).
+         Streamlit 1.60+는 stFileChips/stFileChip, 구버전은 stFileUploaderFile.
+         업로더가 카메라 버튼 하나뿐이라 전역 숨김이 안전하다 */
+      [data-testid="stFileChips"],
+      [data-testid="stFileChip"],
+      [data-testid="stFileUploaderFile"],
+      [data-testid="stFileUploaderDeleteBtn"],
       div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploader"] > div:not(:first-child),
       div[data-testid="stColumn"]:nth-of-type(2) [data-testid="stFileUploader"] small {{
           display:none !important;

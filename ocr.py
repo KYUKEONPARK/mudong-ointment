@@ -60,24 +60,36 @@ def ocr_text(image_bytes: bytes) -> str:
         ]
     }
 
+    # 주의: requests 예외 원문에는 API 키가 포함된 URL이 들어가므로
+    # 사용자에게 보여줄 메시지에 예외 내용을 절대 그대로 담지 않는다.
     try:
         resp = requests.post(f"{VISION_URL}?key={key}", json=payload,
                              timeout=_TIMEOUT)
+    except requests.Timeout as e:
+        raise OCRError("응답이 늦어지고 있습니다. 잠시 후 다시 시도해 주세요.") from e
     except requests.RequestException as e:
-        raise OCRError(f"네트워크 오류: {e}") from e
+        raise OCRError("네트워크 오류가 발생했습니다. 연결 상태를 확인하고 "
+                       "다시 시도해 주세요.") from e
 
     if resp.status_code != 200:
-        raise OCRError(f"Vision API 오류 {resp.status_code}: {resp.text[:200]}")
+        raise OCRError(f"이미지 인식 서비스 오류(코드 {resp.status_code})가 "
+                       "발생했습니다. 잠시 후 다시 시도해 주세요.")
 
-    data = resp.json()
-    r0 = (data.get("responses") or [{}])[0]
-    if "error" in r0 and r0["error"]:
-        raise OCRError(r0["error"].get("message", "인식에 실패했습니다."))
+    # 캡티브 포털 등이 200으로 비정상 본문을 돌려줄 수 있어 파싱도 감싼다
+    try:
+        data = resp.json()
+        r0 = (data.get("responses") or [{}])[0]
+        if "error" in r0 and r0["error"]:
+            raise OCRError(r0["error"].get("message", "인식에 실패했습니다."))
 
-    fta = r0.get("fullTextAnnotation")
-    if fta and fta.get("text"):
-        return fta["text"].strip()
-    tas = r0.get("textAnnotations")
-    if tas:
-        return (tas[0].get("description") or "").strip()
-    return ""
+        fta = r0.get("fullTextAnnotation")
+        if fta and fta.get("text"):
+            return fta["text"].strip()
+        tas = r0.get("textAnnotations")
+        if tas:
+            return (tas[0].get("description") or "").strip()
+        return ""
+    except OCRError:
+        raise
+    except Exception as e:
+        raise OCRError("인식 결과를 처리하지 못했습니다. 다시 시도해 주세요.") from e

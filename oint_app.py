@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -44,7 +46,7 @@ def _load():
     return rows, notes
 
 
-ROWS, NOTES = _load()
+ROWS, _ = _load()
 
 # 표시 상한 (모바일 렌더링 부담 방지)
 MAX_SHOW = 80
@@ -75,6 +77,22 @@ def _md(v) -> str:
     """markdown 렌더링용 이스케이프. "2~3회 … 7~10일"처럼 물결표가
     2개 이상이면 `~…~`가 취소선으로 해석되므로 `\\~`로 바꿔 그대로 표시한다."""
     return _s(v).replace("~", "\\~")
+
+
+def _md_user(v) -> str:
+    """사용자 입력(검색어 등)을 markdown에 넣을 때 서식 문자를 이스케이프."""
+    return re.sub(r"([\\`*_~\[\]<>#])", r"\\\1", _s(v))
+
+
+def _price(v) -> str:
+    """상한가 표시: "5279.0" -> "5,279원". 숫자가 아니면 원문 그대로."""
+    s = _s(v)
+    if not s:
+        return ""
+    try:
+        return f"{int(float(s)):,}원"
+    except ValueError:
+        return f"{s}원"
 
 
 def _grade_of(row: dict):
@@ -125,7 +143,7 @@ def _render_detail(row: dict):
         "함량": _md(row.get("함량")),
         "제형": _md(row.get("제형")),
         "급여 여부": _md(row.get("급여")),
-        "상한가": f"{_md(row.get('상한가'))}원" if _s(row.get("상한가")) else "",
+        "상한가": _price(row.get("상한가")),
         "전문/일반": _md(row.get("전문/일반")),
         "처방 구분": _md(row.get("처방구분")),
     }
@@ -414,12 +432,24 @@ if uploaded is not None:
         st.info("카메라 인식(OCR)을 쓰려면 관리자가 Vision API 키를 설정해야 합니다. "
                 "지금은 위 검색창에 이름을 직접 입력해 주세요.")
     else:
-        with st.spinner("글자 인식 중..."):
-            try:
-                text = ocr.ocr_text(uploaded.getvalue())
-            except ocr.OCRError as e:
-                text = ""
-                st.error(f"인식 실패: {e}")
+        # 실패/미매칭 시 업로드 파일이 남아 rerun(검색창 타이핑 등)마다
+        # Vision API가 재호출·재과금되는 것을 파일 해시 캐시로 차단한다.
+        img_bytes = uploaded.getvalue()
+        img_hash = hashlib.md5(img_bytes).hexdigest()
+        cache = st.session_state.setdefault("ocr_cache", {})
+        if img_hash in cache:
+            text, ocr_err = cache[img_hash]
+        else:
+            with st.spinner("글자 인식 중..."):
+                try:
+                    text, ocr_err = ocr.ocr_text(img_bytes), ""
+                except ocr.OCRError as e:
+                    text, ocr_err = "", str(e)
+            if len(cache) > 20:  # 세션 메모리 과다 방지
+                cache.clear()
+            cache[img_hash] = (text, ocr_err)
+        if ocr_err:
+            st.error(f"인식 실패: {ocr_err}")
         if text:
             if core.count_distinct_brands(ROWS, text) >= 2:
                 st.warning("사진에 연고가 2개 이상 보여요. "
@@ -457,7 +487,7 @@ grades = sorted(
 if q_stripped and grades:
     txt = ", ".join(
         f"{g}등급({core.GRADE_INFO.get(g, ('', ''))[0]})" for g in grades)
-    st.success(f"'{q_stripped}' → 스테로이드 {txt}")
+    st.success(f"'{_md_user(q_stripped)}' → 스테로이드 {txt}")
 
 # 검색어가 있을 때만 결과를 노출(시작 화면을 깔끔하게)
 if q_stripped:
@@ -472,6 +502,15 @@ if q_stripped:
         for row in shown:
             with st.expander(_s(row.get("제품명"))):
                 _render_detail(row)
+
+    # 첫 화면으로 복귀: 콜백은 rerun 전에 실행되므로 위젯 key(search_box)를
+    # 직접 비워도 안전하다 (pending_search 2단계 전달 불필요)
+    def _go_home():
+        st.session_state["search_box"] = ""
+        st.session_state["cam_key_n"] += 1  # 업로드 사진도 리셋
+
+    st.button("🏠 처음으로", key="go_home", use_container_width=True,
+              on_click=_go_home)
 
 # 면책 문구(항상 작게 표시)
 st.caption(core.PATIENT_GUIDE["메타"]["면책"])
